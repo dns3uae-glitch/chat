@@ -2,30 +2,75 @@
 <html lang="ar">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>D-ID Agent - مع مفتاح المستخدم</title>
+  <title>  مساعدك الذكي من شركة ASK</title>
   <style>
-    body { font-family: Arial, sans-serif; direction: rtl; padding: 20px; }
-    .note { background:#f3f3f3; padding:12px; border-radius:8px; margin-bottom:18px; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f3f3f3; margin: 0; padding: 0; }
+    .chat-container { max-width: 500px; margin: 50px auto; background: #fff; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); overflow: hidden; }
+    .chat-header { background: #0078d4; color: white; padding: 15px; font-size: 18px; text-align: center; }
+    .chat-body { padding: 15px; height: 300px; overflow-y: auto; }
+    .chat-message { margin: 10px 0; padding: 10px; border-radius: 8px; max-width: 80%; }
+    .user { background: #e1f5fe; text-align: right; margin-left: auto; }
+    .bot { background: #f1f1f1; text-align: left; margin-right: auto; }
+    .chat-footer { display: flex; padding: 10px; border-top: 1px solid #ccc; }
+    #userInput { flex: 1; padding: 10px; border: none; border-radius: 5px; font-size: 16px; }
+    #sendBtn { background: #0078d4; color: white; border: none; padding: 10px 15px; margin-left: 10px; border-radius: 5px; cursor: pointer; }
   </style>
 </head>
 <body>
-  <h1>اختبار وكيل D-ID</h1>
-  <div class="note">
-    افتح الـ Console في المتصفح (F12 → Console) إذا لم يظهر الوكيل لتعرف رسالة الخطأ بالضبط.
+  <div class="chat-container">
+    <div class="chat-header"> مساعدك الذكي من شركة ASK</div>
+    <div class="chat-body" id="chatBody"></div>
+    <div class="chat-footer">
+      <input type="text" id="userInput" placeholder="اكتب سؤالك هنا...">
+      <button id="sendBtn">إرسال</button>
+    </div>
   </div>
-  <p>إذا كان كل شيء صحيحاً، يجب أن يظهر الوكيل التفاعلي على يمين الصفحة.</p>
 
-  <!-- كود D-ID مع مفتاح المستخدم -->
-  <script type="module"
-      src="https://agent.d-id.com/v2/index.js"
-      data-mode="fabio"
-      data-client-key="ZG5zM3VhZUBnbWFpbC5jb20:GAhCQYpdwlq-pucK5du-_"
-      data-agent-id="v2_agt_JPqY3TqZ"
-      data-name="did-agent"
-      data-monitor="true"
-      data-orientation="horizontal"
-      data-position="right">
+  <script>
+    const chatBody = document.getElementById('chatBody');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+
+    sendBtn.addEventListener('click', sendMessage);
+    userInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    async function sendMessage() {
+      const text = userInput.value.trim();
+      if (!text) return;
+
+      appendMessage('user', text);
+      appendMessage('bot', '...جاري التفكير');
+
+      try {
+        const response = await fetch("https://gpt-proxy-server-xs5u.onrender.com/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: text })
+        });
+
+        const data = await response.json();
+        updateLastBotMessage(data.reply);
+      } catch (error) {
+        updateLastBotMessage("حدث خطأ أثناء الاتصال بالخادم.");
+      }
+
+      userInput.value = '';
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+
+    function appendMessage(role, content) {
+      const msg = document.createElement('div');
+      msg.className = 'chat-message ' + role;
+      msg.textContent = content;
+      chatBody.appendChild(msg);
+    }
+
+    function updateLastBotMessage(content) {
+      const messages = document.querySelectorAll('.chat-message.bot');
+      messages[messages.length - 1].textContent = content;
+    }
   </script>
 </body>
 </html>
