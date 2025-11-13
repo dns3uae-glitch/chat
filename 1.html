@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>مراقبة التركيز</title>
+    <title>مراقبة التركيز المتقدمة</title>
     <style>
         body {
             display: flex;
@@ -19,8 +19,7 @@
             border: 5px solid #ccc;
             border-radius: 8px;
             background-color: #000;
-            /* هذا السطر مهم لـ face-api ليعمل بشكل صحيح */
-            transform: scaleX(-1);
+            transform: scaleX(-1); /* مرآة */
         }
         button {
             margin: 10px;
@@ -41,8 +40,7 @@
 </head>
 <body>
 
-    <h2>مراقبة التركيز</h2>
-    <p>سيقوم التطبيق بمراقبة وجهك، وسيرسل إشعاراً إذا لم تكن مركزاً.</p>
+    <h2>مراقبة التركيز المتقدمة</h2>
     
     <video id="video" width="600" height="450" autoplay muted playsinline></video>
     
@@ -57,99 +55,177 @@
         const startButton = document.getElementById('startButton');
         const statusEl = document.getElementById('status');
         
-        // المسار إلى نماذج الذكاء الاصطناعي (سنستخدمها من سيرفر آخر)
         const MODEL_URL = 'https://cdn.jsdelivr.net/gh/cgarciagl/face-api.js/weights/';
 
-        let detectionInterval; // سيحتوي على المؤقت الخاص بالمراقبة
-        let faceMissingTimer = null; // مؤقت لعدم وجود الوجه
-        const NOTIFY_DELAY = 5000; // 5000 ميللي ثانية = 5 ثوانٍ
+        // --- إعدادات المؤقتات والحدود ---
+        let detectionInterval;
+        let faceMissingSince = null; // مؤقت غياب الوجه
+        let eyesClosedSince = null;  // مؤقت إغلاق العين
+        let lookingAwaySince = null; // مؤقت النظر بعيداً
 
-        // --- الخطوة 1: طلب إذن الإشعارات أولاً ---
+        // (قيم للضبط والموازنة)
+        const EYE_CLOSED_THRESHOLD = 0.22; // حد نسبة أبعاد العين (EAR)
+        const LOOKING_AWAY_THRESHOLD = 1.8; // حد نسبة اتجاه الوجه (Gaze)
+        
+        const FACE_MISSING_DELAY = 5000;  // 5 ثوانٍ لغياب الوجه
+        const EYE_CLOSED_DELAY = 2000;    // ثانيتان لإغلاق العين (للتعب)
+        const LOOKING_AWAY_DELAY = 3000;  // 3 ثوانٍ للنظر بعيداً
+
+        // --- 1. طلب إذن الإشعارات ---
         document.addEventListener('DOMContentLoaded', () => {
             Notification.requestPermission().then(permission => {
-                if (permission === 'granted') {
-                    statusEl.innerText = 'جاهز. اضغط على الزر لبدء تشغيل الكاميرا.';
-                } else {
-                    statusEl.innerText = 'يرجى السماح بالإشعارات لتجربة كاملة.';
-                }
+                statusEl.innerText = (permission === 'granted') ? 
+                    'جاهز. اضغط على الزر.' : 
+                    'يرجى السماح بالإشعارات.';
             });
         });
 
-        // --- الخطوة 2: تحميل النماذج (الأولية) ---
+        // --- 2. تحميل النماذج (بما في ذلك معالم الوجه) ---
         async function loadModels() {
             statusEl.innerText = 'يتم تحميل نماذج الذكاء الاصطناعي...';
             try {
-                // سنستخدم "TinyFaceDetector" لأنه الأسرع للمتصفح
                 await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                // هذا هو النموذج الجديد والمهم لتحليل العيون
+                await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
                 statusEl.innerText = 'النماذج جاهزة.';
             } catch (err) {
                 console.error("خطأ في تحميل النماذج: ", err);
-                statusEl.innerText = 'خطأ في تحميل النماذج. حاول تحديث الصفحة.';
+                statusEl.innerText = 'خطأ في تحميل النماذج.';
             }
         }
-        loadModels(); // تحميل النماذج بمجرد فتح الصفحة
+        loadModels();
 
-        // --- الخطوة 3: تشغيل الكاميرا ---
+        // --- 3. تشغيل الكاميرا ---
         startButton.addEventListener('click', async () => {
             statusEl.innerText = 'نطلب الإذن للكاميرا...';
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: true });
                 video.srcObject = stream;
-                video.play();
-                startButton.style.display = 'none'; // إخفاء الزر
             } catch (err) {
                 console.error("خطأ في الكاميرا: ", err);
                 statusEl.innerText = 'خطأ: لم يتم السماح بالوصول للكاميرا.';
             }
         });
 
-        // --- الخطوة 4: بدء المراقبة (بعد تشغيل الفيديو) ---
+        // --- 4. بدء المراقبة (المنطق الرئيسي) ---
         video.addEventListener('play', () => {
             statusEl.innerText = 'المراقبة قيد التشغيل...';
             
-            // بدء حلقة المراقبة (كل ثانية)
             detectionInterval = setInterval(async () => {
-                // اكتشاف الوجوه في الفيديو
+                const now = Date.now();
+                
+                // اكتشاف الوجه + معالم الوجه
                 const detections = await faceapi.detectAllFaces(video, 
                     new faceapi.TinyFaceDetectorOptions()
-                );
+                ).withFaceLandmarks();
 
-                if (detections.length > 0) {
-                    // تم اكتشاف وجه
-                    statusEl.innerText = 'أنت مركز 👍';
-                    // إعادة ضبط المؤقت إذا كان الوجه موجوداً
-                    faceMissingTimer = null;
-                } else {
-                    // لم يتم اكتشاف وجه
+                // --- الحالة 1: لا يوجد وجه ---
+                if (detections.length === 0) {
                     statusEl.innerText = 'لم يتم اكتشاف وجه...';
+                    if (faceMissingSince === null) faceMissingSince = now; // ابدأ المؤقت
                     
-                    // إذا كان هذا أول مرة يختفي فيها الوجه، ابدأ المؤقت
-                    if (faceMissingTimer === null) {
-                        faceMissingTimer = Date.now();
+                    // إذا كان الوجه مفقوداً لأكثر من 5 ثوانٍ
+                    if (now - faceMissingSince > FACE_MISSING_DELAY) {
+                        sendNotification("ركز في الصفحة", "يبدو أنك لست أمام الشاشة.");
+                        faceMissingSince = null; // أعد الضبط لتجنب الإشعارات المتكررة
                     }
+                    // إعادة ضبط المؤقتات الأخرى
+                    eyesClosedSince = null;
+                    lookingAwaySince = null;
+                    return; // توقف هنا
+                }
 
-                    // التحقق مما إذا كان الوجه مفقوداً لأكثر من 5 ثوانٍ
-                    if (Date.now() - faceMissingTimer > NOTIFY_DELAY) {
-                        sendNotification();
-                        // إعادة ضبط المؤقت (حتى لا نرسل إشعاراً كل ثانية)
-                        faceMissingTimer = null; 
+                // --- الحالة 2: تم اكتشاف وجه ---
+                faceMissingSince = null; // أعد ضبط مؤقت غياب الوجه
+                const landmarks = detections[0].landmarks;
+
+                // --- 2أ: تحليل إغلاق العين (التعب) ---
+                const avgEAR = getAverageEAR(landmarks);
+                
+                if (avgEAR < EYE_CLOSED_THRESHOLD) {
+                    statusEl.innerText = 'عينيك مغلقتان...';
+                    if (eyesClosedSince === null) eyesClosedSince = now; // ابدأ مؤقت التعب
+                    
+                    if (now - eyesClosedSince > EYE_CLOSED_DELAY) {
+                        sendNotification("أنت مرهق", "خذ فترة راحة.");
+                        eyesClosedSince = null; // أعد الضبط
+                    }
+                } else {
+                    eyesClosedSince = null; // أعد ضبط مؤقت التعب (العيون مفتوحة)
+                }
+
+                // --- 2ب: تحليل اتجاه الوجه (التشتت) ---
+                // (لا نتحقق من التشتت إذا كانت العيون مغلقة)
+                if (eyesClosedSince === null) {
+                    const gazeRatio = getGazeRatio(landmarks);
+                    
+                    if (gazeRatio > LOOKING_AWAY_THRESHOLD || gazeRatio < (1 / LOOKING_AWAY_THRESHOLD)) {
+                        statusEl.innerText = 'يبدو أنك تنظر بعيداً...';
+                        if (lookingAwaySince === null) lookingAwaySince = now; // ابدأ مؤقت التشتت
+                        
+                        if (now - lookingAwaySince > LOOKING_AWAY_DELAY) {
+                            sendNotification("ركز في الصفحة", "يبدو أنك غير منتبه.");
+                            lookingAwaySince = null; // أعد الضبط
+                        }
+                    } else {
+                        statusEl.innerText = 'أنت مركز 👍';
+                        lookingAwaySince = null; // أعد ضبط مؤقت التشتت
                     }
                 }
-            }, 1000); // يتم الفحص كل 1000 ميللي ثانية (كل ثانية)
+
+            }, 700); // يتم الفحص كل 700 ميللي ثانية (لتوفير الأداء)
         });
 
-        // --- الخطوة 5: دالة إرسال الإشعار ---
-        function sendNotification() {
+        // --- 5. دالة إرسال الإشعار (معدلة) ---
+        function sendNotification(title, body) {
             if (Notification.permission === 'granted') {
-                const title = 'انتبه وركز!';
-                const options = {
-                    body: 'يبدو أنك لست أمام الشاشة. خذ فترة راحة إذا أردت.',
-                    icon: 'https://cdn-icons-png.flaticon.com/512/138/138406.png' // أيقونة تنبيه
-                };
+                const options = { body: body };
                 new Notification(title, options);
             }
         }
-    </script>
 
+        // --- دوال مساعدة لحسابات الوجه ---
+
+        // دالة لحساب المسافة بين نقطتين
+        function getDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        // دالة لحساب نسبة أبعاد العين (EAR)
+        function getEAR(eye) {
+            // eye هو مصفوفة من 6 نقاط
+            const a = getDistance(eye[1], eye[5]);
+            const b = getDistance(eye[2], eye[4]);
+            const c = getDistance(eye[0], eye[3]);
+            return (a + b) / (2.0 * c);
+        }
+
+        // دالة لحساب متوسط EAR للعينين
+        function getAverageEAR(landmarks) {
+            const leftEye = landmarks.getLeftEye();
+            const rightEye = landmarks.getRightEye();
+            const leftEAR = getEAR(leftEye);
+            const rightEAR = getEAR(rightEye);
+            return (leftEAR + rightEAR) / 2.0;
+        }
+
+        // دالة لحساب نسبة اتجاه الوجه (تقديرية)
+        function getGazeRatio(landmarks) {
+            const leftEye = landmarks.getLeftEye();
+            const rightEye = landmarks.getRightEye();
+            const nose = landmarks.getNose();
+            
+            // حساب النقطة المركزية بين العينين
+            const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
+            const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
+
+            // نسبة المسافة الأفقية من مركز العين إلى الأنف
+            // هذه طريقة تقديرية بسيطة جداً
+            const gazeRatio = (eyeCenterX - nose[3].x) / (getDistance(leftEye[0], rightEye[3]));
+            // نستخدم القيمة المطلقة ومضاعف لجعلها أسهل في المقارنة
+            return Math.abs(gazeRatio) * 10; 
+        }
+
+    </script>
 </body>
 </html>
