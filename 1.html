@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>عرض الكاميرا</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+        }
+        h2 {
+            color: #333;
+        }
+        video {
+            border: 5px solid #ccc;
+            border-radius: 8px;
+            background-color: #000;
+        }
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>عرض الكاميرا المباشر</h2>
+    <video id="video" width="600" height="450" autoplay playsinline></video>
+    <button id="startButton">تشغيل الكاميرا</button>
+
+    <script>
+        const video = document.getElementById('video');
+        const startButton = document.getElementById('startButton');
+
+        startButton.addEventListener('click', async () => {
+            try {
+                // طلب الإذن والوصول إلى الكاميرا
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: true, // نريد الفيديو
+                    audio: false // لا نحتاج الصوت
+                });
+
+                // عرض البث المباشر في عنصر الـ video
+                video.srcObject = stream;
+                video.play();
+                
+                // إخفاء الزر بعد التشغيل
+                startButton.style.display = 'none';
+
+            } catch (err) {
+                // معالجة الأخطاء (مثل رفض المستخدم للإذن)
+                console.error("حدث خطأ: ", err);
+                alert("لا يمكن الوصول إلى الكاميرا. يرجى التأكد من منح الإذن.");
+            }
+        });
+    </script>
+
+</body>
+</html>
