@@ -33,11 +33,6 @@
             font-size: 18px;
             margin-top: 20px;
         }
-        .audio-alert {
-            margin-top: 20px;
-            font-size: 18px;
-            color: red;
-        }
     </style>
 </head>
 <body>
@@ -46,7 +41,6 @@
     <video id="video" width="600" height="450" autoplay playsinline></video>
     <button id="startButton">تشغيل الكاميرا</button>
     <div id="alert" class="alert"></div>
-    <div id="audioAlert" class="audio-alert"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.4/camera_utils.js"></script>
@@ -56,17 +50,12 @@
         const video = document.getElementById('video');
         const startButton = document.getElementById('startButton');
         const alertBox = document.getElementById('alert');
-        const audioAlertBox = document.getElementById('audioAlert');
 
         let isTired = false;
         let isLookingAway = false;
         let blinkDuration = 0;
         let lastBlinkTime = Date.now();
         let blinkThreshold = 1000; // 1 second for detecting blink
-        let faceDirection = 0;
-        let blinkCount = 0;
-
-        const audioAlert = new Audio('https://www.soundjay.com/button/beep-07.wav');  // Add a simple alert sound
 
         startButton.addEventListener('click', async () => {
             try {
@@ -121,17 +110,13 @@
                 const currentTime = Date.now();
                 if (eyeDistance < 0.05) {
                     isTired = true;
-                    blinkCount++;
                     blinkDuration = currentTime - lastBlinkTime;
                     if (blinkDuration > blinkThreshold) {
                         alertBox.innerHTML = 'أنت مرهق! حاول أخذ فترة راحة.';
-                        audioAlertBox.innerHTML = 'أنت مرهق! ';
-                        audioAlert.play();
                     }
                 } else {
                     isTired = false;
                     alertBox.innerHTML = '';
-                    audioAlertBox.innerHTML = '';
                 }
 
                 // Detect direction of the face for attention
@@ -139,8 +124,6 @@
                 if (nose.x < 0.3 || nose.x > 0.7) {
                     isLookingAway = true;
                     alertBox.innerHTML += '<br>أنت غير منتبه! يرجى النظر إلى الشاشة.';
-                    audioAlertBox.innerHTML = 'أنت غير منتبه! ';
-                    audioAlert.play();
                 } else {
                     isLookingAway = false;
                 }
