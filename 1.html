@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>عرض الكاميرا</title>
+    <title>مراقبة التركيز</title>
     <style>
         body {
             display: flex;
@@ -13,54 +13,142 @@
             min-height: 100vh;
             font-family: Arial, sans-serif;
             background-color: #f4f4f4;
-        }
-        h2 {
             color: #333;
         }
         video {
             border: 5px solid #ccc;
             border-radius: 8px;
             background-color: #000;
+            /* هذا السطر مهم لـ face-api ليعمل بشكل صحيح */
+            transform: scaleX(-1);
         }
         button {
-            margin-top: 20px;
+            margin: 10px;
             padding: 10px 20px;
             font-size: 16px;
             cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #4CAF50;
+            color: white;
+        }
+        #status {
+            font-size: 18px;
+            margin-top: 20px;
+            font-weight: bold;
         }
     </style>
 </head>
 <body>
 
-    <h2>عرض الكاميرا المباشر</h2>
-    <video id="video" width="600" height="450" autoplay playsinline></video>
-    <button id="startButton">تشغيل الكاميرا</button>
+    <h2>مراقبة التركيز</h2>
+    <p>سيقوم التطبيق بمراقبة وجهك، وسيرسل إشعاراً إذا لم تكن مركزاً.</p>
+    
+    <video id="video" width="600" height="450" autoplay muted playsinline></video>
+    
+    <button id="startButton">تشغيل الكاميرا والمراقبة</button>
+    
+    <div id="status">الرجاء الانتظار...</div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
 
     <script>
         const video = document.getElementById('video');
         const startButton = document.getElementById('startButton');
+        const statusEl = document.getElementById('status');
+        
+        // المسار إلى نماذج الذكاء الاصطناعي (سنستخدمها من سيرفر آخر)
+        const MODEL_URL = 'https://cdn.jsdelivr.net/gh/cgarciagl/face-api.js/weights/';
 
-        startButton.addEventListener('click', async () => {
+        let detectionInterval; // سيحتوي على المؤقت الخاص بالمراقبة
+        let faceMissingTimer = null; // مؤقت لعدم وجود الوجه
+        const NOTIFY_DELAY = 5000; // 5000 ميللي ثانية = 5 ثوانٍ
+
+        // --- الخطوة 1: طلب إذن الإشعارات أولاً ---
+        document.addEventListener('DOMContentLoaded', () => {
+            Notification.requestPermission().then(permission => {
+                if (permission === 'granted') {
+                    statusEl.innerText = 'جاهز. اضغط على الزر لبدء تشغيل الكاميرا.';
+                } else {
+                    statusEl.innerText = 'يرجى السماح بالإشعارات لتجربة كاملة.';
+                }
+            });
+        });
+
+        // --- الخطوة 2: تحميل النماذج (الأولية) ---
+        async function loadModels() {
+            statusEl.innerText = 'يتم تحميل نماذج الذكاء الاصطناعي...';
             try {
-                // طلب الإذن والوصول إلى الكاميرا
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: true, // نريد الفيديو
-                    audio: false // لا نحتاج الصوت
-                });
+                // سنستخدم "TinyFaceDetector" لأنه الأسرع للمتصفح
+                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                statusEl.innerText = 'النماذج جاهزة.';
+            } catch (err) {
+                console.error("خطأ في تحميل النماذج: ", err);
+                statusEl.innerText = 'خطأ في تحميل النماذج. حاول تحديث الصفحة.';
+            }
+        }
+        loadModels(); // تحميل النماذج بمجرد فتح الصفحة
 
-                // عرض البث المباشر في عنصر الـ video
+        // --- الخطوة 3: تشغيل الكاميرا ---
+        startButton.addEventListener('click', async () => {
+            statusEl.innerText = 'نطلب الإذن للكاميرا...';
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
                 video.srcObject = stream;
                 video.play();
-                
-                // إخفاء الزر بعد التشغيل
-                startButton.style.display = 'none';
-
+                startButton.style.display = 'none'; // إخفاء الزر
             } catch (err) {
-                // معالجة الأخطاء (مثل رفض المستخدم للإذن)
-                console.error("حدث خطأ: ", err);
-                alert("لا يمكن الوصول إلى الكاميرا. يرجى التأكد من منح الإذن.");
+                console.error("خطأ في الكاميرا: ", err);
+                statusEl.innerText = 'خطأ: لم يتم السماح بالوصول للكاميرا.';
             }
         });
+
+        // --- الخطوة 4: بدء المراقبة (بعد تشغيل الفيديو) ---
+        video.addEventListener('play', () => {
+            statusEl.innerText = 'المراقبة قيد التشغيل...';
+            
+            // بدء حلقة المراقبة (كل ثانية)
+            detectionInterval = setInterval(async () => {
+                // اكتشاف الوجوه في الفيديو
+                const detections = await faceapi.detectAllFaces(video, 
+                    new faceapi.TinyFaceDetectorOptions()
+                );
+
+                if (detections.length > 0) {
+                    // تم اكتشاف وجه
+                    statusEl.innerText = 'أنت مركز 👍';
+                    // إعادة ضبط المؤقت إذا كان الوجه موجوداً
+                    faceMissingTimer = null;
+                } else {
+                    // لم يتم اكتشاف وجه
+                    statusEl.innerText = 'لم يتم اكتشاف وجه...';
+                    
+                    // إذا كان هذا أول مرة يختفي فيها الوجه، ابدأ المؤقت
+                    if (faceMissingTimer === null) {
+                        faceMissingTimer = Date.now();
+                    }
+
+                    // التحقق مما إذا كان الوجه مفقوداً لأكثر من 5 ثوانٍ
+                    if (Date.now() - faceMissingTimer > NOTIFY_DELAY) {
+                        sendNotification();
+                        // إعادة ضبط المؤقت (حتى لا نرسل إشعاراً كل ثانية)
+                        faceMissingTimer = null; 
+                    }
+                }
+            }, 1000); // يتم الفحص كل 1000 ميللي ثانية (كل ثانية)
+        });
+
+        // --- الخطوة 5: دالة إرسال الإشعار ---
+        function sendNotification() {
+            if (Notification.permission === 'granted') {
+                const title = 'انتبه وركز!';
+                const options = {
+                    body: 'يبدو أنك لست أمام الشاشة. خذ فترة راحة إذا أردت.',
+                    icon: 'https://cdn-icons-png.flaticon.com/512/138/138406.png' // أيقونة تنبيه
+                };
+                new Notification(title, options);
+            }
+        }
     </script>
 
 </body>
